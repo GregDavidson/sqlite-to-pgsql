@@ -1,3 +1,4 @@
+# Need some me GNU Awk 4.1 features
 awk = /usr/local/bin/gawk
 BASHer = sqlite-to-pgsql
 AWKer = sqlite-to-pgsql.awk
