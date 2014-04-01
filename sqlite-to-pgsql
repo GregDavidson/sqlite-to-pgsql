@@ -1,0 +1,152 @@
+#!/bin/bash
+case "$0" in
+		*/*) pgm_name="${0##*/}"; pgm_dir="${0%%/*}/" ;;
+		*)	pgm_name="$0";	pgm_dir="" ;;
+esac
+purpose='SQLite to PostgreSQL Database Converter'
+oversion='0.3 of 19 February 2014'
+version='0.5 of 17 March 2014'
+author='J. Greg Davidson, http://jgd.ngender.net'
+copyright='GNU Affero General Public License, http://www.gnu.org/licenses/agpl-3.0.html'
+stderr() { >&2 echo "$*"; }
+comment() { "$verbose" && stderr "$*"; }
+error_msg() { stderr "$pgm_name error: $*"; }
+error() { code="$1"; shift; error_msg "$*"; exit "$code"; }
+default_gawk_converter='sqlite-to-pgsql.awk'
+usage="Usage: $pgm_name [-verbose|-print=CSVs|schema=NAME] SQLITE-DB-FILE [OUTPUT-FILE-OR-DIR]"
+examples=(
+		'+Convert an sqlite file to a PostgreSQL file'
+		'sqlite-to-pgsql places.sqlite places.pgsql'
+		'+Create a PostgreSQL file for each table in sqlite db'
+		'mkdir Tables;sqlite-to-pgsql places.sqlite Tables'
+		'+Load equivalent of sqlite db into PostgreSQL database "my-db"'
+		'sqlite-to-pgsql places.sqlite | psql my-db'
+)
+tools=(
+		'sqlite3 3.7.13'
+		'GNU Awk (gawk) 4.0.1'
+		'GNU sed version 4.2.1'
+		'GNU bash 4.2.37'
+		'psql (PostgreSQL) 9.3.2'
+		'on a GNU/Linux O/S'
+		'with databases from Firefox 27.0'
+)
+help() {
+		local ifs="$IFS"; IFS=";"
+		echo "$purpose, version $version;$usage
+Examples:;${examples[*]};+$tools
+Tested with;${tools[*]}" |
+		sed 's/;/\n\t/g' | sed 's/^\t[+]//'
+		IFS="$ifs"
+		echo "Some features not yet documented!!"
+}
+readable() { [ -f "$1" -a -r "$1" ]; }
+runnable() { [ -f "$1" -a -x "$1" ]; }
+awk_args=""
+add_awk_args() {
+	case "$awk_args" in
+		(''|*[![:space:]]) awk_args="$awk_args -v $1=$2" ;;
+		(*) awk_args="${awk_args}-v $1=$2" ;;
+	esac
+}
+
+gawk_converter="$default_gawk_converter"
+under="$HOME/.mozilla"
+schema_arg=''
+verbose='false'
+while true; do
+		case "$1" in
+				--help|-help) help; exit 0 ;;
+				--version|-version) echo "$version"; exit 0 ;;
+				*.awk) gawk_converter="$1" ; shift ;;
+				--under|-under) under="$2" ; shift 2 ;;
+				--schema|-schema) schema_arg="$2" ; shift 2 ;;
+				--print|-schema) add_awk_args 'only_print' "$2" ; shift 2 ;;
+				-v|--verbose|-verbose) verbose='true' ; add_awk_args verbose 1; shift ;;
+				*) break ;;
+		esac
+done
+[ $# -ge 1 -a $# -le 2 ] || { stderr "$usage" && exit 1; }
+
+sqlite="$1" ; shift
+readable "$sqlite" || case "$sqlite" in
+		*/*)  error 2 "No sqlite file $sqlite" ;;
+		*.sqlite) sqlite=$(find "$under" -name "$sqlite") ;;
+esac
+readable "$sqlite" || error 3 "No database file $sqlite"
+
+to_name() {
+	local tail="${1##*/}"
+	local root="${tail%%.*}"
+	case "$root" in
+		[0-9]*) root="_$root" ;;
+	esac
+	echo "$root" | tr -cs 'a-z_0-9\n' '_'
+}
+
+case "$schema_arg" in
+	[+]) add_awk_args 'schema' $(to_name "$(to_name $sqlite)_${USER}_${HOSTNAME}")! ;;
+	?*) add_awk_args 'schema' $(to_name $schema_arg) ;;
+esac
+
+[ -d "$1" ] && {
+	odir="$1"; shift
+		[ -w "$odir" ] || error 4 "Output directory $sqlite not writable"
+}
+
+[ $# -eq 1 ] && {
+		ofile="$1"; shift
+		[ -f "$ofile" ] && {
+				[ -w "$ofile" ] || error 5 "$ofile" not writable
+				echo -n "Overwrite $ofile with PostgreSQL database? [yN] "
+				read answer
+				case "$answer" in
+						y*) ;;
+						*) echo Goodbye then!  ; exit 0 ;;
+				esac
+		}
+}
+
+# We could almost allow the converter-script to be any
+# executable program, but then we'd have to come up
+# with another argument-passing scheme.
+{ gawk_script="$gawk_converter" ; runnable "$gawk_script"; } ||
+{ gawk_script=$(type -p "$gawk_converter"); } ||
+{ gawk_script="$pgm_dir$gawk_converter" ; runnable "$gawk_script"; } ||
+error 6 "Can't find $gawk_converter"
+gawk_convert() {	gawk $awk_args -f "$gawk_script" "$@"; }
+
+type sqlite3 >/dev/null || exit 7
+	
+tables=( $(echo .tables | sqlite3 "$sqlite") )
+
+dump_table() {
+				echo "pragma table_info('$table');"
+				echo ".dump $table"
+}
+
+if [ -d "$odir" ]; then
+		for table in "${tables[@]}"; do
+				comment "Dumping table $table to $odir/$table.pg.sql"
+				dump_table "$table"
+				echo ".quit" | sqlite3 "$sqlite" |
+				gawk_convert > "$odir/$table.pg.sql" 2> "$odir/$table.debug"
+		done
+elif [ "$ofile" ]; then {
+				comment "Writing output to $ofile"
+				for table in "${tables[@]}"; do
+						comment "Dumping table $table"
+						dump_table "$table"
+				done
+				echo ".quit"
+		} |	sqlite3 "$sqlite" | gawk_convert > "$ofile" 2>"${ofile%.*}.debug"
+else {
+				for table in "${tables[@]}"; do
+						comment "Dumping table $table"
+						dump_table "$table"
+				done
+				echo ".quit"
+		} | sqlite3 "$sqlite" | gawk_convert
+fi
+comment Goodbye!
+exit 0
