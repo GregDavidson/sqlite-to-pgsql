@@ -11,7 +11,7 @@ tested for the sqlite databases produced by Firefox.
 | FILE			| PURPOSE
 |-----------------------|------------
 | Makefile		| tells make how to run tests
-| README		| this file
+| README.md		| this file
 | sqlite-to-pgsql	| master shell script
 | sqlite-to-pgsql.awk	| awk script that does the real work
 | tests.debug		| debug output of running tests
